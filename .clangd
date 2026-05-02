@@ -1,0 +1,7 @@
+CompileFlags:
+  Add:
+    - "-std=c++20"
+    - "-I/home/jve/.local/share/vulkansdk/default/x86_64/include"
+    - -Wno-error=designated_init_for_non_aggregate
+  Remove:
+    - "-std=*"
