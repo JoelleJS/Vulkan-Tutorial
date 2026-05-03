@@ -74,30 +74,17 @@ bool supportsRequiredExtensions(const vk::raii::PhysicalDevice& device) {
         });
 }
 
-bool supportsDynamicRendering(const vk::raii::PhysicalDevice& device) {
-    const auto features =
-        device.template getFeatures2<vk::PhysicalDeviceFeatures2,
-                                     vk::PhysicalDeviceVulkan13Features>();
-    return features.template get<vk::PhysicalDeviceVulkan13Features>()
-        .dynamicRendering;
-}
-
-bool supportsExtendedDynamicState(const vk::raii::PhysicalDevice& device) {
-    const auto features = device.template getFeatures2<
-        vk::PhysicalDeviceFeatures2,
+bool supportsRequiredFeatures(const vk::raii::PhysicalDevice& device) {
+    const auto features = device.getFeatures2<
+        vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
+        vk::PhysicalDeviceVulkan13Features,
         vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-    return features
-        .template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
-        .extendedDynamicState;
-}
-
-bool supportsShaderDrawParameters(const vk::raii::PhysicalDevice& device) {
-    const auto features = device.template getFeatures2<
-        vk::PhysicalDeviceFeatures2,
-        vk::PhysicalDeviceVulkan11Features>();
-    return features
-        .template get<vk::PhysicalDeviceVulkan11Features>()
-        .shaderDrawParameters;
+    return features.get<vk::PhysicalDeviceVulkan11Features>()
+               .shaderDrawParameters &&
+           features.get<vk::PhysicalDeviceVulkan13Features>()
+               .dynamicRendering &&
+           features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
+               .extendedDynamicState;
 }
 
 bool isPhysicalDeviceSuitable(const vk::raii::PhysicalDevice& device,
@@ -105,9 +92,7 @@ bool isPhysicalDeviceSuitable(const vk::raii::PhysicalDevice& device,
     return supportsVulkanVersion(device, vk::ApiVersion13) &&
            supportsGraphicsQueue(device, surface) &&
            supportsRequiredExtensions(device) &&
-           supportsDynamicRendering(device) &&
-           supportsExtendedDynamicState(device) &&
-           supportsShaderDrawParameters(device);
+           supportsRequiredFeatures(device);
 }
 
 vk::SurfaceFormatKHR
