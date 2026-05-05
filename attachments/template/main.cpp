@@ -36,6 +36,7 @@ class HelloTriangleApplication {
     vk::raii::PhysicalDevice physicalDevice = nullptr;
     vk::raii::Device device = nullptr;
     vk::raii::Queue graphicsQueue = nullptr;
+    uint32_t queueIndex = ~0;
     vk::raii::SurfaceKHR surface = nullptr;
     vk::SurfaceFormatKHR swapChainSurfaceFormat = {};
     vk::Extent2D swapChainExtent = {};
@@ -44,6 +45,8 @@ class HelloTriangleApplication {
     std::vector<vk::raii::ImageView> swapChainImageViews = {};
     vk::raii::PipelineLayout pipelineLayout = nullptr;
     vk::raii::Pipeline graphicsPipeline = nullptr;
+    vk::raii::CommandPool commandPool = nullptr;
+    vk::raii::CommandBuffer commandBuffer = nullptr;
 
     void initWindow() {
         glfwInit();
@@ -62,6 +65,8 @@ class HelloTriangleApplication {
         createSwapchain();
         createImageViews();
         createGraphicsPipeline();
+        createCommandPool();
+        createCommandBuffer();
     }
 
     void mainLoop() {
@@ -154,11 +159,11 @@ class HelloTriangleApplication {
     }
 
     void createLogicalDevice() {
-        const uint32_t graphicsIndex = std::get<1>(
+        queueIndex = std::get<1>(
             getGraphicsQueueFamilyProperties(physicalDevice, surface).value());
         const float queuePriority = 0.5f;
         vk::DeviceQueueCreateInfo deviceQueueCreateInfo{
-            .queueFamilyIndex = graphicsIndex,
+            .queueFamilyIndex = queueIndex,
             .queueCount = 1,
             .pQueuePriorities = &queuePriority,
         };
@@ -184,7 +189,7 @@ class HelloTriangleApplication {
             .ppEnabledExtensionNames = requiredDeviceExtensions.data()};
 
         device = vk::raii::Device(physicalDevice, deviceCreateInfo);
-        graphicsQueue = vk::raii::Queue(device, graphicsIndex, 0);
+        graphicsQueue = vk::raii::Queue(device, queueIndex, 0);
     }
 
     void createSwapchain() {
@@ -323,21 +328,39 @@ class HelloTriangleApplication {
 
         vk::StructureChain<vk::GraphicsPipelineCreateInfo,
                            vk::PipelineRenderingCreateInfo>
-            pipelineCreateInfoChain = {
-                {.stageCount = 2,
-                 .pStages = shaderStages,
-                 .pVertexInputState = &vertexInputInfo,
-                 .pInputAssemblyState = &inputAssembly,
-                 .pViewportState = &viewportState,
-                 .pRasterizationState = &rasterizer,
-                 .pMultisampleState = &multisampling,
-                 .pColorBlendState = &colorBlending,
-                 .pDynamicState = &dynamicState,
-                 .layout = pipelineLayout,
-                 .renderPass = nullptr},
-                pipelineRenderingCreateInfo};
+            pipelineCreateInfoChain = {{.stageCount = 2,
+                                        .pStages = shaderStages,
+                                        .pVertexInputState = &vertexInputInfo,
+                                        .pInputAssemblyState = &inputAssembly,
+                                        .pViewportState = &viewportState,
+                                        .pRasterizationState = &rasterizer,
+                                        .pMultisampleState = &multisampling,
+                                        .pColorBlendState = &colorBlending,
+                                        .pDynamicState = &dynamicState,
+                                        .layout = pipelineLayout,
+                                        .renderPass = nullptr},
+                                       pipelineRenderingCreateInfo};
 
-        graphicsPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
+        graphicsPipeline = vk::raii::Pipeline(
+            device, nullptr,
+            pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
+    }
+
+    void createCommandPool() {
+        vk::CommandPoolCreateInfo poolInfo{
+            .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+            .queueFamilyIndex = queueIndex};
+        commandPool = vk::raii::CommandPool(device, poolInfo);
+    }
+
+    void createCommandBuffer() {
+        vk::CommandBufferAllocateInfo allocInfo{
+            .commandPool = commandPool,
+            .level = vk::CommandBufferLevel::ePrimary,
+            .commandBufferCount = 1};
+
+        commandBuffer =
+            std::move(vk::raii::CommandBuffers(device, allocInfo).front());
     }
 };
 
