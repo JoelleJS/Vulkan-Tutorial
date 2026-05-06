@@ -181,7 +181,8 @@ class HelloTriangleApplication {
             featureChain{
                 {}, // vk::PhysicalDeviceFeatures2 (empty for now)
                 {.shaderDrawParameters = true},
-                {.dynamicRendering =
+                {.synchronization2 = true,
+                 .dynamicRendering =
                      true}, // Enable dynamic rendering from Vulkan 1.3
                 {.extendedDynamicState =
                      true} // Enable extended dynamic state from the extension
@@ -206,11 +207,11 @@ class HelloTriangleApplication {
         swapChainExtent = chooseSwapExtent(physicalDevice, surface, window);
         const vk::SurfaceCapabilitiesKHR surfaceCapabilities =
             physicalDevice.getSurfaceCapabilitiesKHR(surface);
-        const uint32_t imageCount = surfaceCapabilities.minImageCount + 1;
+        const uint32_t minImageCount = chooseSwapMinImageCount(surfaceCapabilities);
 
         vk::SwapchainCreateInfoKHR swapChainCreateInfo{
             .surface = *surface,
-            .minImageCount = imageCount,
+            .minImageCount = minImageCount,
             .imageFormat = swapChainSurfaceFormat.format,
             .imageColorSpace = swapChainSurfaceFormat.colorSpace,
             .imageExtent = swapChainExtent,
@@ -378,7 +379,37 @@ class HelloTriangleApplication {
             device, {.flags = vk::FenceCreateFlagBits::eSignaled});
     }
 
-    void drawFrame() {}
+    void drawFrame() {
+        auto fenceResult =
+            device.waitForFences(*drawFence, vk::True, UINT64_MAX);
+        if (fenceResult != vk::Result::eSuccess) {
+            throw std::runtime_error("failed to wait for fence!");
+        }
+        device.resetFences(*drawFence);
+        auto [result, imageIndex] = swapChain.acquireNextImage(
+            UINT64_MAX, *presentCompleteSemaphore, nullptr);
+        recordCommandBuffer(imageIndex);
+
+        vk::PipelineStageFlags waitDestinationStageMask(
+            vk::PipelineStageFlagBits::eColorAttachmentOutput);
+        const vk::SubmitInfo submitInfo{
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &*presentCompleteSemaphore,
+            .pWaitDstStageMask = &waitDestinationStageMask,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &*commandBuffer,
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = &*renderFinishedSemaphore};
+        graphicsQueue.submit(submitInfo, *drawFence);
+
+        const vk::PresentInfoKHR presentInfoKHR{.waitSemaphoreCount = 1,
+                                                .pWaitSemaphores =
+                                                    &*renderFinishedSemaphore,
+                                                .swapchainCount = 1,
+                                                .pSwapchains = &*swapChain,
+                                                .pImageIndices = &imageIndex};
+        result = graphicsQueue.presentKHR(presentInfoKHR);
+    }
 
     void recordCommandBuffer(uint32_t imageIndex) {
         commandBuffer.begin({});

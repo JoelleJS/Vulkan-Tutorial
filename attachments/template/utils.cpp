@@ -82,6 +82,8 @@ bool supportsRequiredFeatures(const vk::raii::PhysicalDevice& device) {
     return features.get<vk::PhysicalDeviceVulkan11Features>()
                .shaderDrawParameters &&
            features.get<vk::PhysicalDeviceVulkan13Features>()
+               .synchronization2 &&
+           features.get<vk::PhysicalDeviceVulkan13Features>()
                .dynamicRendering &&
            features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
                .extendedDynamicState;
@@ -139,6 +141,16 @@ vk::Extent2D chooseSwapExtent(const vk::raii::PhysicalDevice& device,
                                  capabilities.maxImageExtent.width),
             std::clamp<uint32_t>(height, capabilities.minImageExtent.height,
                                  capabilities.maxImageExtent.height)};
+}
+
+uint32_t
+chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities) {
+    auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
+    if ((0 < surfaceCapabilities.maxImageCount) &&
+        (surfaceCapabilities.maxImageCount < minImageCount)) {
+        minImageCount = surfaceCapabilities.maxImageCount;
+    }
+    return minImageCount;
 }
 
 std::vector<char> readFile(const std::string& filename) {

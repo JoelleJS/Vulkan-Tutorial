@@ -20,4 +20,5 @@ vk::Extent2D chooseSwapExtent(const vk::raii::PhysicalDevice& device,
                               const vk::raii::SurfaceKHR& surface,
                               GLFWwindow*& window);
 std::vector<char> readFile(const std::string& filename);
+uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities);
 #endif
