@@ -46,10 +46,11 @@ class HelloTriangleApplication {
     vk::raii::PipelineLayout pipelineLayout = nullptr;
     vk::raii::Pipeline graphicsPipeline = nullptr;
     vk::raii::CommandPool commandPool = nullptr;
-    vk::raii::CommandBuffer commandBuffer = nullptr;
-    vk::raii::Semaphore presentCompleteSemaphore = nullptr;
-    vk::raii::Semaphore renderFinishedSemaphore = nullptr;
-    vk::raii::Fence drawFence = nullptr;
+    std::vector<vk::raii::CommandBuffer> commandBuffers;
+    std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
+    std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
+    std::vector<vk::raii::Fence> inFlightFences;
+    uint32_t frameIndex = 0;
 
     void initWindow() {
         glfwInit();
@@ -69,7 +70,7 @@ class HelloTriangleApplication {
         createImageViews();
         createGraphicsPipeline();
         createCommandPool();
-        createCommandBuffer();
+        createCommandBuffers();
         createSyncObjects();
     }
 
@@ -207,7 +208,8 @@ class HelloTriangleApplication {
         swapChainExtent = chooseSwapExtent(physicalDevice, surface, window);
         const vk::SurfaceCapabilitiesKHR surfaceCapabilities =
             physicalDevice.getSurfaceCapabilitiesKHR(surface);
-        const uint32_t minImageCount = chooseSwapMinImageCount(surfaceCapabilities);
+        const uint32_t minImageCount =
+            chooseSwapMinImageCount(surfaceCapabilities);
 
         vk::SwapchainCreateInfoKHR swapChainCreateInfo{
             .surface = *surface,
@@ -360,26 +362,35 @@ class HelloTriangleApplication {
         commandPool = vk::raii::CommandPool(device, poolInfo);
     }
 
-    void createCommandBuffer() {
+    void createCommandBuffers() {
         vk::CommandBufferAllocateInfo allocInfo{
             .commandPool = commandPool,
             .level = vk::CommandBufferLevel::ePrimary,
-            .commandBufferCount = 1};
+            .commandBufferCount = MAX_FRAMES_IN_FLIGHT};
 
-        commandBuffer =
-            std::move(vk::raii::CommandBuffers(device, allocInfo).front());
+        commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
     }
 
     void createSyncObjects() {
-        presentCompleteSemaphore =
-            vk::raii::Semaphore(device, vk::SemaphoreCreateInfo());
-        renderFinishedSemaphore =
-            vk::raii::Semaphore(device, vk::SemaphoreCreateInfo());
-        drawFence = vk::raii::Fence(
-            device, {.flags = vk::FenceCreateFlagBits::eSignaled});
+		assert(presentCompleteSemaphores.empty() && renderFinishedSemaphores.empty() && inFlightFences.empty());
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            renderFinishedSemaphores.emplace_back(device,
+                                                  vk::SemaphoreCreateInfo());
+        }
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            presentCompleteSemaphores.emplace_back(device,
+                                                   vk::SemaphoreCreateInfo());
+            inFlightFences.emplace_back(
+                device, vk::FenceCreateInfo{
+                            .flags = vk::FenceCreateFlagBits::eSignaled});
+        }
     }
 
     void drawFrame() {
+        auto& drawFence = inFlightFences[frameIndex];
+        auto& presentCompleteSemaphore = presentCompleteSemaphores[frameIndex];
+        auto& commandBuffer = commandBuffers[frameIndex];
+
         auto fenceResult =
             device.waitForFences(*drawFence, vk::True, UINT64_MAX);
         if (fenceResult != vk::Result::eSuccess) {
@@ -388,7 +399,10 @@ class HelloTriangleApplication {
         device.resetFences(*drawFence);
         auto [result, imageIndex] = swapChain.acquireNextImage(
             UINT64_MAX, *presentCompleteSemaphore, nullptr);
-        recordCommandBuffer(imageIndex);
+        auto& renderFinishedSemaphore = renderFinishedSemaphores[imageIndex];
+        
+        commandBuffer.reset();
+        recordCommandBuffer(commandBuffer, imageIndex);
 
         vk::PipelineStageFlags waitDestinationStageMask(
             vk::PipelineStageFlagBits::eColorAttachmentOutput);
@@ -409,12 +423,15 @@ class HelloTriangleApplication {
                                                 .pSwapchains = &*swapChain,
                                                 .pImageIndices = &imageIndex};
         result = graphicsQueue.presentKHR(presentInfoKHR);
+
+        frameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
-    void recordCommandBuffer(uint32_t imageIndex) {
+    void recordCommandBuffer(vk::raii::CommandBuffer& commandBuffer,
+                             uint32_t imageIndex) {
         commandBuffer.begin({});
         transition_image_layout(
-            imageIndex, vk::ImageLayout::eUndefined,
+            commandBuffer, imageIndex, vk::ImageLayout::eUndefined,
             vk::ImageLayout::eColorAttachmentOptimal,
             {}, // srcAccessMask (no need to wait for previous operations)
             vk::AccessFlagBits2::eColorAttachmentWrite,         // dstAccessMask
@@ -446,7 +463,7 @@ class HelloTriangleApplication {
         commandBuffer.draw(3, 1, 0, 0);
         commandBuffer.endRendering();
         transition_image_layout(
-            imageIndex, vk::ImageLayout::eColorAttachmentOptimal,
+            commandBuffer, imageIndex, vk::ImageLayout::eColorAttachmentOptimal,
             vk::ImageLayout::ePresentSrcKHR,
             vk::AccessFlagBits2::eColorAttachmentWrite,         // srcAccessMask
             {},                                                 // dstAccessMask
@@ -456,7 +473,8 @@ class HelloTriangleApplication {
         commandBuffer.end();
     }
 
-    void transition_image_layout(uint32_t imageIndex,
+    void transition_image_layout(vk::raii::CommandBuffer& commandBuffer,
+                                 uint32_t imageIndex,
                                  vk::ImageLayout old_layout,
                                  vk::ImageLayout new_layout,
                                  vk::AccessFlags2 src_access_mask,
