@@ -51,14 +51,24 @@ class HelloTriangleApplication {
     std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
     std::vector<vk::raii::Fence> inFlightFences;
     uint32_t frameIndex = 0;
+    bool framebufferResized = false;
 
     void initWindow() {
         glfwInit();
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
         window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+        glfwSetWindowUserPointer(window, this);
+        glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+    }
+
+    static void framebufferResizeCallback(GLFWwindow* window, int width,
+                                          int height) {
+        auto app = reinterpret_cast<HelloTriangleApplication*>(
+            glfwGetWindowUserPointer(window));
+        app->framebufferResized = true;
     }
 
     void initVulkan() {
@@ -74,6 +84,27 @@ class HelloTriangleApplication {
         createSyncObjects();
     }
 
+    void cleanupSwapchain() {
+        swapChainImageViews.clear();
+        swapChain = nullptr;
+    }
+
+    void recreateSwapchain() {
+        int width = 0, height = 0;
+        glfwGetFramebufferSize(window, &width, &height);
+        while (width == 0 || height == 0) {
+            glfwGetFramebufferSize(window, &width, &height);
+            glfwWaitEvents();
+        }
+
+        device.waitIdle();
+
+        cleanupSwapchain();
+
+        createSwapchain();
+        createImageViews();
+    }
+
     void mainLoop() {
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
@@ -83,6 +114,8 @@ class HelloTriangleApplication {
     }
 
     void cleanup() {
+        cleanupSwapchain();
+
         glfwDestroyWindow(window);
 
         glfwTerminate();
@@ -372,7 +405,8 @@ class HelloTriangleApplication {
     }
 
     void createSyncObjects() {
-		assert(presentCompleteSemaphores.empty() && renderFinishedSemaphores.empty() && inFlightFences.empty());
+        assert(presentCompleteSemaphores.empty() &&
+               renderFinishedSemaphores.empty() && inFlightFences.empty());
         for (size_t i = 0; i < swapChainImages.size(); i++) {
             renderFinishedSemaphores.emplace_back(device,
                                                   vk::SemaphoreCreateInfo());
@@ -387,25 +421,37 @@ class HelloTriangleApplication {
     }
 
     void drawFrame() {
-        auto& drawFence = inFlightFences[frameIndex];
-        auto& presentCompleteSemaphore = presentCompleteSemaphores[frameIndex];
-        auto& commandBuffer = commandBuffers[frameIndex];
+        vk::raii::Fence& drawFence = inFlightFences[frameIndex];
+        vk::raii::Semaphore& presentCompleteSemaphore =
+            presentCompleteSemaphores[frameIndex];
+        vk::raii::CommandBuffer& commandBuffer = commandBuffers[frameIndex];
 
-        auto fenceResult =
+        vk::Result fenceResult =
             device.waitForFences(*drawFence, vk::True, UINT64_MAX);
         if (fenceResult != vk::Result::eSuccess) {
             throw std::runtime_error("failed to wait for fence!");
         }
-        device.resetFences(*drawFence);
         auto [result, imageIndex] = swapChain.acquireNextImage(
             UINT64_MAX, *presentCompleteSemaphore, nullptr);
-        auto& renderFinishedSemaphore = renderFinishedSemaphores[imageIndex];
-        
+        if (result == vk::Result::eErrorOutOfDateKHR) {
+            recreateSwapchain();
+            return;
+        }
+        if (result != vk::Result::eSuccess &&
+            result != vk::Result::eSuboptimalKHR) {
+            assert(result == vk::Result::eTimeout ||
+                   result == vk::Result::eNotReady);
+            throw std::runtime_error("failed to acquire swap chain image!");
+        }
+        device.resetFences(*drawFence);
+
         commandBuffer.reset();
         recordCommandBuffer(commandBuffer, imageIndex);
 
         vk::PipelineStageFlags waitDestinationStageMask(
             vk::PipelineStageFlagBits::eColorAttachmentOutput);
+        vk::raii::Semaphore& renderFinishedSemaphore =
+            renderFinishedSemaphores[imageIndex];
         const vk::SubmitInfo submitInfo{
             .waitSemaphoreCount = 1,
             .pWaitSemaphores = &*presentCompleteSemaphore,
@@ -423,6 +469,15 @@ class HelloTriangleApplication {
                                                 .pSwapchains = &*swapChain,
                                                 .pImageIndices = &imageIndex};
         result = graphicsQueue.presentKHR(presentInfoKHR);
+        if ((result == vk::Result::eSuboptimalKHR) ||
+            (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized) {
+            framebufferResized = false;
+            recreateSwapchain();
+        } else {
+            // There are no other success codes than eSuccess; on any error
+            // code, presentKHR already threw an exception.
+            assert(result == vk::Result::eSuccess);
+        }
 
         frameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
     }
